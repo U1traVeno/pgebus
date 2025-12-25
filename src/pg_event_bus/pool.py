@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Callable, List, Optional
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
-    from .dispatcher import EventDispatcher
+    from .routing import EventRouter
     from .queue import EventQueue
     from .repo import EventRepository
     from .worker import EventWorker
@@ -26,7 +26,7 @@ class EventWorkerPool:
         self,
         event_queue: EventQueue,
         event_repo: EventRepository,
-        dispatcher: EventDispatcher,
+        router: EventRouter,
         session_factory: Callable[[], AsyncSession],
         n_workers: int = 5,
         max_retries: int = 3,
@@ -37,7 +37,7 @@ class EventWorkerPool:
         Args:
             event_queue: 共享的事件队列
             event_repo: 事件仓储
-            dispatcher: 事件分发器
+            router: 事件路由器
             session_factory: 创建数据库会话的工厂函数
             n_workers: Worker 数量
             max_retries: 每个 Worker 的最大重试次数
@@ -45,7 +45,7 @@ class EventWorkerPool:
         """
         self.event_queue = event_queue
         self.event_repo = event_repo
-        self.dispatcher = dispatcher
+        self.router = router
         self.session_factory = session_factory
         self.n_workers = n_workers
         self.max_retries = max_retries
@@ -71,7 +71,7 @@ class EventWorkerPool:
             EventWorker(
                 event_queue=self.event_queue,
                 event_repo=self.event_repo,
-                dispatcher=self.dispatcher,
+                router=self.router,
                 session_factory=self.session_factory,
                 worker_id=i,
                 max_retries=self.max_retries,

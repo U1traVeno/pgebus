@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
     from .queue import EventQueue
     from .repo import EventRepository
-    from .dispatcher import EventDispatcher
+    from .routing import EventRouter
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +144,7 @@ class EventWorker(BaseWorker[DBEvent]):
         self,
         event_queue: EventQueue,
         event_repo: EventRepository,
-        dispatcher: EventDispatcher,
+        router: EventRouter,
         session_factory: Callable[[], AsyncSession],
         worker_id: int,
         max_retries: int = 3,
@@ -155,7 +155,7 @@ class EventWorker(BaseWorker[DBEvent]):
         Args:
             event_queue: 事件队列
             event_repo: 事件仓储
-            dispatcher: 事件分发器
+            router: 事件路由器
             session_factory: 创建数据库会话的工厂函数
             worker_id: Worker 的唯一标识符
             max_retries: 最大重试次数
@@ -164,7 +164,7 @@ class EventWorker(BaseWorker[DBEvent]):
         super().__init__(max_retries=max_retries, poll_interval=poll_interval)
         self.event_queue = event_queue
         self.event_repo = event_repo
-        self.dispatcher = dispatcher
+        self.router = router
         self.session_factory = session_factory
         self.worker_id = worker_id
 
@@ -212,8 +212,8 @@ class EventWorker(BaseWorker[DBEvent]):
                 await self.event_repo.mark_processing(session, event_id)
                 await session.commit()
 
-            # 使用 dispatcher 处理事件
-            await self.dispatcher.process_event(session, task)
+            # 使用 router 处理事件
+            await self.router.handle(session, task)
 
             # 标记事件为已完成
             if event_id:

@@ -9,11 +9,11 @@ __version__ = "0.1.0"
 
 # 导出核心组件
 from .models import Event, EventStatus, EventSource
-from .base import DBEvent, BaseEventHandler, publish_event
+from .base import DBEvent, publish_event
 from .repo import EventRepository
 from .queue import EventQueue
 from .listener import EventListener, create_listener_connection
-from .dispatcher import EventDispatcher, get_event_dispatcher
+from .routing import EventRouter
 from .worker import EventWorker, BaseWorker
 from .pool import EventWorkerPool
 from .system import EventSystem, get_event_system, start_event_system
@@ -25,7 +25,6 @@ __all__ = [
     "EventSource",
     # 基础类
     "DBEvent",
-    "BaseEventHandler",
     "publish_event",
     # 仓储
     "EventRepository",
@@ -34,9 +33,8 @@ __all__ = [
     # 监听器
     "EventListener",
     "create_listener_connection",
-    # 分发器
-    "EventDispatcher",
-    "get_event_dispatcher",
+    # 路由
+    "EventRouter",
     # Worker
     "BaseWorker",
     "EventWorker",

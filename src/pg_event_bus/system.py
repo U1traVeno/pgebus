@@ -10,7 +10,7 @@ from .listener import EventListener, create_listener_connection
 from .pool import EventWorkerPool
 from .queue import EventQueue
 from .repo import EventRepository
-from .dispatcher import EventDispatcher
+from .routing import EventRouter
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +22,10 @@ class EventSystem:
     1. EventListener 监听 PostgreSQL NOTIFY，将事件 ID 放入队列
     2. EventQueue 使用 EventRepository 从数据库加载完整事件数据
     3. WorkerPool 管理多个 Worker 从队列并发消费事件
-    4. 每个 Worker 获取数据库会话并使用 EventDispatcher 处理事件
+    4. 每个 Worker 获取数据库会话并使用 EventRouter 处理事件
 
     使用示例：
-        dispatcher = get_event_dispatcher()
+        router = EventRouter()
         event_system = EventSystem(
             dispatcher=dispatcher,
             session_factory=lambda: session_manager.session(),
@@ -45,7 +45,7 @@ class EventSystem:
 
     def __init__(
         self,
-        dispatcher: EventDispatcher,
+        router: EventRouter,
         session_factory: Callable[[], AsyncSession],
         db_host: str,
         db_port: int,
@@ -61,7 +61,7 @@ class EventSystem:
         """初始化事件系统。
 
         Args:
-            dispatcher: 事件分发器
+            router: 事件路由器
             session_factory: 创建数据库会话的工厂函数
             db_host: 数据库主机
             db_port: 数据库端口
@@ -74,7 +74,7 @@ class EventSystem:
             max_retries: 每个事件的最大重试次数
             poll_interval: Worker 轮询间隔（秒）
         """
-        self.dispatcher = dispatcher
+        self.router = router
         self.session_factory = session_factory
         self.db_host = db_host
         self.db_port = db_port
@@ -127,7 +127,7 @@ class EventSystem:
         self.worker_pool = EventWorkerPool(
             event_queue=self.event_queue,
             event_repo=self.event_repo,
-            dispatcher=self.dispatcher,
+            router=self.router,
             session_factory=self.session_factory,
             n_workers=self.n_workers,
             max_retries=self.max_retries,
@@ -191,7 +191,7 @@ _event_system: Optional[EventSystem] = None
 
 
 def get_event_system(
-    dispatcher: EventDispatcher,
+    router: EventRouter,
     session_factory: Callable[[], AsyncSession],
     db_host: str,
     db_port: int,
@@ -205,7 +205,7 @@ def get_event_system(
     """获取全局事件系统实例。
 
     Args:
-        dispatcher: 事件分发器
+        router: 事件路由器
         session_factory: 创建数据库会话的工厂函数
         db_host: 数据库主机
         db_port: 数据库端口
@@ -222,7 +222,7 @@ def get_event_system(
     global _event_system
     if _event_system is None:
         _event_system = EventSystem(
-            dispatcher=dispatcher,
+            router=router,
             session_factory=session_factory,
             db_host=db_host,
             db_port=db_port,
@@ -237,7 +237,7 @@ def get_event_system(
 
 
 async def start_event_system(
-    dispatcher: EventDispatcher,
+    router: EventRouter,
     session_factory: Callable[[], AsyncSession],
     db_host: str,
     db_port: int,
@@ -253,7 +253,7 @@ async def start_event_system(
     便捷函数，用于快速启动事件系统。
 
     Args:
-        dispatcher: 事件分发器
+        router: 事件路由器
         session_factory: 创建数据库会话的工厂函数
         db_host: 数据库主机
         db_port: 数据库端口
@@ -268,7 +268,7 @@ async def start_event_system(
         已启动的 EventSystem 实例
     """
     event_system = get_event_system(
-        dispatcher=dispatcher,
+        router=router,
         session_factory=session_factory,
         db_host=db_host,
         db_port=db_port,
