@@ -29,16 +29,6 @@ class EventStatus(str, enum.Enum):
     RETRYING = "retrying"  # 重试中
 
 
-class EventSource(str, enum.Enum):
-    """事件来源"""
-
-    INTERNAL = "internal"  # 内部触发（如数据库操作）
-    WEBHOOK = "webhook"  # 外部 webhook
-    API = "api"  # API 直接调用
-    SCHEDULED = "scheduled"  # 定时任务
-    SYSTEM = "system"  # 系统事件
-
-
 class Event(Base):
     """事件持久化模型"""
 
@@ -69,12 +59,6 @@ class Event(Base):
         index=True,
         nullable=False,
         comment="事件类型，如 'template.version.created'",
-    )
-    source: Mapped[EventSource] = mapped_column(
-        Enum(EventSource),
-        index=True,
-        nullable=False,
-        comment="事件来源",
     )
 
     # 事件负载

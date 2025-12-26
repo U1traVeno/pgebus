@@ -4,6 +4,8 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+from sqlalchemy.schema import CreateSchema
+
 from .listener import EventListener, create_listener_connection
 from .pool import EventWorkerPool
 from .queue import EventQueue
@@ -94,6 +96,11 @@ class EventSystem:
     async def start(self) -> None:
         """启动事件系统（EventListener 和 WorkerPool）。"""
         logger.info("启动事件系统...")
+
+        # 确保默认 schema 存在（与业务表隔离）
+        async with self.session_manager.session() as session:
+            await session.execute(CreateSchema(self.db.schema, if_not_exists=True))
+            await session.commit()
 
         # 创建 asyncpg 连接
         self._connection = await create_listener_connection(self.db)

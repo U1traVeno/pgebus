@@ -74,6 +74,8 @@ class DatabaseConfig:
     user: str = "postgres"
     password: str = "postgres"
     application_name: Optional[str] = None
+    # 默认使用独立 schema 与业务表隔离
+    schema: str = "pgebus"
 
     engine: EngineConfig = field(default_factory=EngineConfig)
 
@@ -91,6 +93,14 @@ class DatabaseConfig:
             f"postgresql://{self.user}:{self.password}"
             f"@{self.host}:{self.port}/{self.database}"
         )
+
+    @property
+    def search_path(self) -> Optional[str]:
+        """PostgreSQL search_path。
+
+        默认优先在独立 schema 中解析（并保留 public 作为兜底）。
+        """
+        return f"{self.schema},public"
 
 
 class DatabaseSessionManager:
@@ -113,10 +123,19 @@ class DatabaseSessionManager:
         config = self._config
         engine_kwargs = config.engine.engine_kwargs()
 
+        server_settings_updates: Dict[str, str] = {}
         if config.application_name:
+            server_settings_updates["application_name"] = config.application_name
+        if config.search_path:
+            server_settings_updates["search_path"] = config.search_path
+
+        if server_settings_updates:
             connect_args = dict(engine_kwargs.get("connect_args", {}))
             server_settings = dict(connect_args.get("server_settings", {}))
-            server_settings.setdefault("application_name", config.application_name)
+
+            for key, value in server_settings_updates.items():
+                server_settings.setdefault(key, value)
+
             connect_args["server_settings"] = server_settings
             engine_kwargs["connect_args"] = connect_args
 

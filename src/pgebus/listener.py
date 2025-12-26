@@ -35,8 +35,12 @@ async def create_listener_connection(
         asyncpg.Connection: 用于事件监听的专用连接
     """
     server_settings: Optional[Dict[str, str]] = None
-    if db.application_name:
-        server_settings = {"application_name": db.application_name}
+    if db.application_name or db.search_path:
+        server_settings = {}
+        if db.application_name:
+            server_settings["application_name"] = db.application_name
+        if db.search_path:
+            server_settings["search_path"] = db.search_path
 
     connection: asyncpg.Connection = await asyncpg.connect(  # type: ignore
         db.asyncpg_dsn,
