@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Event, EventSource
+from .models import Event
 
 
 class DBEvent(Dict[str, Any]):
@@ -38,7 +38,6 @@ async def publish_event(
     session: AsyncSession,
     event_type: str,
     payload: Dict[str, Any],
-    source: EventSource,
     channel: str,
     run_at: Optional[datetime] = None,
 ) -> Event:
@@ -69,7 +68,6 @@ async def publish_event(
     event = Event(
         type=event_type,
         payload=payload,
-        source=source,
         run_at=run_at,
     )
     session.add(event)

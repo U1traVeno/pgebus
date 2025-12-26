@@ -8,7 +8,7 @@ pgebus - 基于 PostgreSQL 的事件总线系统
 __version__ = "0.1.0"
 
 # 导出核心组件
-from .models import Event, EventStatus, EventSource
+from .models import Event, EventStatus
 from .base import DBEvent, publish_event
 from .repo import EventRepository
 from .queue import EventQueue
@@ -23,7 +23,6 @@ __all__ = [
     # 模型
     "Event",
     "EventStatus",
-    "EventSource",
     # 基础类
     "DBEvent",
     "publish_event",
