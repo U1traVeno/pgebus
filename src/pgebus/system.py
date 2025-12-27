@@ -11,7 +11,8 @@ from .pool import EventWorkerPool
 from .queue import EventQueue
 from .repo import EventRepository
 from .routing import EventRouter
-from .db import DatabaseConfig, DatabaseSessionManager
+from .config import Settings
+from .db import DatabaseSessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -27,17 +28,22 @@ class EventSystem:
 
     使用示例：
         router = EventRouter()
+        settings = Settings(
+            database={
+                "host": "localhost",
+                "port": 5432,
+                "user": "user",
+                "password": "password",
+                "database": "mydb",
+                "application_name": "pgebus",
+            },
+            event_system={
+                "n_workers": 5,
+            },
+        )
         event_system = EventSystem(
             router=router,
-            db=DatabaseConfig(
-                host="localhost",
-                port=5432,
-                user="user",
-                password="password",
-                database="mydb",
-                application_name="pgebus",
-            ),
-            n_workers=5,
+            settings=settings,
         )
         await event_system.start()
 
@@ -49,34 +55,26 @@ class EventSystem:
     def __init__(
         self,
         router: EventRouter,
-        db: DatabaseConfig,
-        channel: str = "events",
-        n_workers: int = 5,
-        queue_maxsize: int = 1000,
-        max_retries: int = 3,
-        poll_interval: float = 1.0,
+        settings: Settings,
     ) -> None:
         """初始化事件系统。
 
         Args:
             router: 事件路由器
-            db: 数据库配置（用于创建内部 engine/session）
-            channel: PostgreSQL NOTIFY 频道名称
-            n_workers: Worker 并发数量
-            queue_maxsize: 事件队列最大容量（0 表示无限）
-            max_retries: 每个事件的最大重试次数
-            poll_interval: Worker 轮询间隔（秒）
+            settings: 配置（包含 database 与 event_system）
         """
         self.router = router
-        self.db = db
-        self.channel = channel
-        self.n_workers = n_workers
-        self.queue_maxsize = queue_maxsize
-        self.max_retries = max_retries
-        self.poll_interval = poll_interval
+        self.settings = settings
+        self.db = settings.database
+
+        self.channel = settings.event_system.channel
+        self.n_workers = settings.event_system.n_workers
+        self.queue_maxsize = settings.event_system.queue_maxsize
+        self.max_retries = settings.event_system.max_retries
+        self.poll_interval = settings.event_system.poll_interval
 
         # 内部创建 engine/session（使用 session_manager 的 async with 管理生命周期）
-        self.session_manager = DatabaseSessionManager(db)
+        self.session_manager = DatabaseSessionManager(self.db)
 
         # 创建事件仓储
         self.event_repo = EventRepository()
@@ -85,7 +83,7 @@ class EventSystem:
         self.event_queue = EventQueue(
             event_repo=self.event_repo,
             session_manager=self.session_manager,
-            maxsize=queue_maxsize,
+            maxsize=self.queue_maxsize,
         )
 
         # 组件（延迟初始化）
@@ -99,7 +97,7 @@ class EventSystem:
 
         # 确保默认 schema 存在（与业务表隔离）
         async with self.session_manager.session() as session:
-            await session.execute(CreateSchema(self.db.schema, if_not_exists=True))
+            await session.execute(CreateSchema(self.db.schema_name, if_not_exists=True))
             await session.commit()
 
         # 创建 asyncpg 连接

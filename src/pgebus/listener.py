@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Dict, Optional
 
 import asyncpg  # type: ignore
 
-from .db import DatabaseConfig
+from .config import DatabaseConfig
 
 if TYPE_CHECKING:
     from .queue import EventQueue

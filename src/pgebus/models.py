@@ -99,8 +99,6 @@ class Event(Base):
         Index("ix_events_status_created_at", "status", "created_at"),
         # 按类型和状态查询
         Index("ix_events_type_status", "type", "status"),
-        # 按来源和创建时间查询
-        Index("ix_events_source_created_at", "source", "created_at"),
         # 按状态、延迟执行时间和创建时间查询（用于处理延迟事件）
         Index("ix_events_status_run_at_created_at", "status", "run_at", "created_at"),
     )
