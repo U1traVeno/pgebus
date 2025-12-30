@@ -119,6 +119,16 @@ class EventSystemConfig(BaseModel):
         description="Worker 在队列为空时的轮询间隔（秒）。",
     )
 
+    pending_poll_enabled: bool = Field(
+        default=True,
+        description="是否启用轮询触发队列 prefetch（兜底 NOTIFY 丢失/启动堆积）。",
+    )
+    pending_poll_interval_seconds: float = Field(
+        default=5.0,
+        ge=1.0,
+        description="轮询间隔（秒），默认 5 秒。",
+    )
+
     shutdown_wait_timeout: float = Field(
         default=30.0,
         ge=0.0,

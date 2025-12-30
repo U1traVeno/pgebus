@@ -1,6 +1,7 @@
 """事件系统集成，统一管理 EventListener 和 WorkerPool。"""
 
 from __future__ import annotations
+import asyncio
 import logging
 from typing import Optional
 
@@ -73,6 +74,12 @@ class EventSystem:
         self.max_retries = settings.event_system.max_retries
         self.poll_interval = settings.event_system.poll_interval
 
+        # pending 轮询（兜底触发 maybe_prefetch，避免无 NOTIFY 时事件“卡死”）
+        self.pending_poll_enabled = settings.event_system.pending_poll_enabled
+        self.pending_poll_interval_seconds = (
+            settings.event_system.pending_poll_interval_seconds
+        )
+
         # 内部创建 engine/session（使用 session_manager 的 async with 管理生命周期）
         self.session_manager = DatabaseSessionManager(self.db)
 
@@ -90,6 +97,21 @@ class EventSystem:
         self.listener: Optional[EventListener] = None
         self.worker_pool: Optional[EventWorkerPool] = None
         self._connection = None
+
+        # house-keeping task
+        self._pending_poll_task: Optional[asyncio.Task[None]] = None
+
+    async def _pending_poll_loop(self) -> None:
+        try:
+            while True:
+                try:
+                    await self.event_queue.maybe_prefetch()
+                except Exception as exc:
+                    logger.error("事件 pending 轮询 prefetch 失败: %s", exc)
+
+                await asyncio.sleep(self.pending_poll_interval_seconds)
+        except asyncio.CancelledError:
+            return
 
     async def start(self) -> None:
         """启动事件系统（EventListener 和 WorkerPool）。"""
@@ -123,6 +145,18 @@ class EventSystem:
         )
         await self.worker_pool.start()
 
+        # 启动 pending 轮询任务（兜底 NOTIFY 丢失/启动堆积）
+        if self.pending_poll_enabled:
+            if self._pending_poll_task is None or self._pending_poll_task.done():
+                self._pending_poll_task = asyncio.create_task(
+                    self._pending_poll_loop(),
+                    name="event-system-pending-poll",
+                )
+                logger.info(
+                    "事件 pending 轮询已启动: interval=%ss",
+                    self.pending_poll_interval_seconds,
+                )
+
         logger.info(
             f"事件系统已启动: "
             f"Workers={self.n_workers}, "
@@ -139,6 +173,16 @@ class EventSystem:
             timeout: 等待超时时间（秒），None 表示无限等待
         """
         logger.info("停止事件系统...")
+
+        # 先停止 pending 轮询，避免关闭期间继续打 DB
+        if self._pending_poll_task is not None:
+            self._pending_poll_task.cancel()
+            try:
+                await self._pending_poll_task
+            except asyncio.CancelledError:
+                pass
+            finally:
+                self._pending_poll_task = None
 
         # 先停止 listener，不再接收新事件
         if self.listener:
