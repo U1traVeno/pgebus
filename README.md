@@ -1,26 +1,78 @@
-# pgebus
+# pgworkflow
 
 [**English**](README.md) | [简体中文](README.zh-CN.md)
 
-Event Bus System Based on PostgreSQL - Lightweight and Reliable Event Processing Framework
+PostgreSQL-backed workflow / outbox engine for irreversible operations
+
+---
+
+## What pgworkflow Is
+
+**pgworkflow is NOT an event bus.**
+
+pgworkflow is a **database-backed workflow and outbox engine** designed for systems that:
+
+- Must interact with **irreversible external side effects**
+- Require **strong auditability and traceability**
+- Treat failures as **first-class, inspectable states**
+- Already rely on PostgreSQL as the system of record
+
+If you are looking for pub/sub, streaming, or fan-out messaging — this is not it.
+
+---
+
+## Core Idea
+
+pgworkflow embraces a simple but strict model:
+
+> **PostgreSQL is the single source of truth.  
+> External side effects are never considered transactional.  
+> The database must never lie about what has (or has not) happened.**
+
+It helps you answer questions like:
+
+- *Has this operation actually completed?*
+- *Did we attempt the external call?*
+- *If it failed, why — and where should we resume?*
+
+---
 
 ## Features
 
-- ✅ **PostgreSQL as the Single Source of Truth** - The database serves as the only queue, ensuring data consistency
-- ✅ **NOTIFY/LISTEN Real-Time Notifications** - Leverages PostgreSQL's native features for event pushing
-- ✅ **Concurrency Safety** - Ensures no duplicate event processing
-- ✅ **Delayed Execution** - Supports scheduled tasks and delayed event handling
-- ✅ **Automatic Retry** - Built-in retry mechanism for automatic handling of failures
-- ✅ **Hierarchical Event Dispatching** - FastAPI-style router composition via `prefix` and `include_router()` (TODO: add wildcard/prefix matching if needed)
-- ✅ **Fully Typed** - Ships with complete type annotations (PEP 561)
+- ✅ **PostgreSQL as the Single Source of Truth**
+  - Events / operations are stored durably in Postgres
+  - No hidden state in brokers or memory
 
-## Installation
+- ✅ **Outbox-style Execution Model**
+  - Database state is committed **before** any external side effects
+  - Side effects are executed by workers based on persisted intent
 
-TODO
+- ✅ **Strong Failure Semantics**
+  - Failures are recorded, not swallowed
+  - No “maybe processed” states
 
-## What pgebus IS NOT
+- ✅ **Concurrency Safety**
+  - `SELECT ... FOR UPDATE SKIP LOCKED` based dispatch
+  - No duplicate execution within a single database
 
-pgebus is not intended to replace:
+- ✅ **Delayed Execution**
+  - Schedule operations via `run_at`
+
+- ✅ **Automatic Retry**
+  - Built-in retry with attempt tracking
+
+- ✅ **Router-based Handler Composition**
+  - FastAPI-style router API (`prefix`, `include_router`)
+  - Designed for large but structured workflows
+
+- ✅ **Fully Typed**
+  - Complete type annotations (PEP 561)
+
+---
+
+## What pgworkflow Is NOT
+
+pgworkflow does **not** replace:
 
 - RabbitMQ
 - Redis Streams
@@ -28,60 +80,75 @@ pgebus is not intended to replace:
 - NATS
 - Cloud-native message brokers
 
-Specifically, it is not suitable for:
+It is **not suitable** for:
 
 - High-throughput event streaming
 - Large fan-out pub/sub workloads
 - Cross-datacenter or internet-scale messaging
-- Heavy payload delivery
+- Best-effort or lossy signaling
 
 If you need throughput, fan-out, or decoupled consumers, use a real message broker.
 
-## Why pge-bus
+---
+
+## When pgworkflow Makes Sense
 
 You are likely a good fit if:
 
-- Your application is mostly local or monolithic
-- You control the PostgreSQL instance
-- You have long-running or expensive external jobs
-- Losing or duplicating an event would cause real cost
-- You already rely on PostgreSQL for correctness
+- Your system is mostly **local or monolithic**
+- You **control the PostgreSQL instance**
+- You perform **expensive or irreversible external operations**
+- Duplicate execution would cause **real cost**
+- You need to **inspect, audit, or replay** operations
+- You care more about correctness than throughput
 
-## Why Not Use pgebus
+---
 
-You should probably not use this if:
+## When You Should Not Use It
+
+You probably should not use pgworkflow if:
 
 - Your system is microservice-heavy
-- You need horizontal scaling across regions
-- You expect burst traffic or high fan-out
+- You need cross-region horizontal scaling
+- You expect burst traffic or massive fan-out
 - You treat events as best-effort signals
+- You want exactly-once delivery semantics (no system can give you that for external side effects)
 
-## API Reference
+---
 
-This project intentionally mimics FastAPI's feel:
+## API Overview
 
-- Create an `EventRouter()` (often named `event`)
-- Register handlers via `@event.on("...")`
-- Compose routers via `include_router(...)` (prefix-style)
-- Run the system with `await EventSystem(...).start()` / `await ...stop()`
-- Publish events via `publish_event(...)`
+pgworkflow intentionally mimics FastAPI's mental model:
 
-### Quickstart
+- Define workflows via `WorkflowRouter`
+- Register steps via `@router.on("...")`
+- Compose routers with `include_router(...)`
+- Run workers via `WorkflowSystem.start()`
+- Record intent via `publish_operation(...)`
+
+---
+
+## Quickstart
 
 ```python
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-from pgebus import EventRouter, EventSystem, Settings, DatabaseSessionManager, publish_event
+from pgworkflow import (
+    WorkflowRouter,
+    WorkflowSystem,
+    Settings,
+    DatabaseSessionManager,
+    publish_operation,
+)
+
+router = WorkflowRouter()
 
 
-event = EventRouter()
-
-
-@event.on("demo.hello", transactional=False)
+@router.on("demo.hello", transactional=False)
 async def handle_demo(ctx, payload):
-    # payload is the raw DB payload dict
-    # ctx.session is None unless some handler requires transactional=True
+    # payload is the persisted operation payload
+    # ctx.session is None unless transactional=True is required
     print("got:", payload)
 
 
@@ -93,106 +160,120 @@ async def main() -> None:
             "user": "postgres",
             "password": "postgres",
             "database": "postgres",
-            "application_name": "pgebus",
-            "schema": "pgebus",
+            "application_name": "pgworkflow",
+            "schema": "pgworkflow",
         },
-        event_system={
-            "channel": "events",
+        workflow_system={
+            "channel": "workflow",
             "n_workers": 5,
         },
     )
 
-    system = EventSystem(router=event, settings=settings)
+    system = WorkflowSystem(router=router, settings=settings)
     await system.start()
 
-    # Publish from your app code (can be the same process)
-    publisher_sm = DatabaseSessionManager(settings.database)
-    async with publisher_sm.session() as session:
-        await publish_event(
+    # Record intent from your application code
+    sm = DatabaseSessionManager(settings.database)
+    async with sm.session() as session:
+        await publish_operation(
             session,
-            event_type="demo.hello",
+            operation_type="demo.hello",
             payload={"msg": "hi"},
-            channel=settings.event_system.channel,
+            channel=settings.workflow_system.channel,
         )
-        # IMPORTANT: publish_event does NOT commit
+        # IMPORTANT: publish_operation does NOT commit
         await session.commit()
 
     # Delayed execution
-    await publish_event(
-        session,
-        event_type="demo.hello",
-        payload={"msg": "later"},
-        channel=settings.event_system.channel,
-        run_at=datetime.now(timezone.utc) + timedelta(seconds=10),
-    )
-    await session.commit()
+    async with sm.session() as session:
+        await publish_operation(
+            session,
+            operation_type="demo.hello",
+            payload={"msg": "later"},
+            channel=settings.workflow_system.channel,
+            run_at=datetime.now(timezone.utc) + timedelta(seconds=10),
+        )
+        await session.commit()
 
- # ... your app runs ...
+    # ... your app runs ...
 
     await system.stop()
-    await publisher_sm.close()
+    await sm.close()
 
 
 asyncio.run(main())
 ```
 
-### Core APIs
+---
 
-#### `EventSystem`
+## Transaction Semantics
 
-- `EventSystem(router: EventRouter, settings: Settings)`
-- `await EventSystem.start()`
-- `await EventSystem.stop(wait_for_completion: bool = True, timeout: float | None = 30.0)`
+- `transactional=True` means:
+  - “This handler requires a dispatcher-managed database transaction.”
 
-Notes:
+- It does **NOT** mean:
+  - Auto-commit
+  - One transaction per handler
 
-- `start()` ensures the configured schema exists (via `CREATE SCHEMA IF NOT EXISTS`).
-- `start()` does NOT create tables/migrations for you. (TODO: document recommended migration workflow.)
+Rules:
 
-#### `EventRouter`
+- At most **one transaction per operation**
+- Transaction is opened **only if required**
+- Handlers **cannot**:
+  - `commit`
+  - `rollback`
+  - `close`
+  - `begin`
+  - `begin_nested`
 
-- `EventRouter(prefix: str = "")`
-- `@router.on(path: str)` registers a handler.
-- `router.include_router(other: EventRouter, prefix: str = "")` composes routers.
+An explicit escape hatch exists:
 
-Dispatch rules:
+```python
+ctx.session.unsafe
+```
 
-- Event type matching is currently **exact** (`path == event["type"]`).
-- Hierarchical composition is supported via router `prefix` and `include_router(...)` joining with `.`.
-- TODO: add prefix/wildcard matching if you want handlers to match `demo.*`-style patterns.
+Using it means you give up pgworkflow’s guarantees.
 
-Handler signature:
+---
 
-- `async def handler(ctx: EventContext, payload: dict) -> Any`
+## Consistency Model (Important)
 
-About `transactional`:
+pgworkflow does **not** attempt to make external side effects transactional.
 
-- `@router.on("...", transactional=True)` means “I require running inside a dispatcher-managed transaction”.
-- ❌ `transactional` does not mean auto-commit.
-- ❌ `transactional` does not mean one transaction per handler.
-- ✅ At most one transaction is opened per event; the dispatcher decides based on all matched handlers.
-- Inside handlers, `commit/rollback/close/begin/begin_nested/connection/get_bind/invalidate` are forbidden; use `ctx.session.unsafe` only as an explicit escape hatch.
+Instead, it guarantees:
 
-#### `publish_event`
+- The database never marks an operation as completed unless it explicitly records that fact
+- Failed commits do not advance workflow state
+- Every attempt is observable and auditable
 
-- `await publish_event(session, event_type: str, payload: dict, channel: str, run_at: datetime | None = None) -> Event`
+External systems may succeed or fail independently.  
+pgworkflow ensures your database never lies about it.
 
-Notes:
-
-- You must `commit()` (or use `async with session.begin(): ...`) for the event to be visible to workers.
-- `payload` should stay small (typically IDs), because PostgreSQL is the source of truth.
+---
 
 ## Dependencies
 
 - Python 3.8+
-- SQLAlchemy 2.0+ (with asyncio support)
+- SQLAlchemy 2.0+ (async)
 - asyncpg
-- PostgreSQL 9.5+
+- PostgreSQL 14+
+
+---
 
 ## License
 
 MIT
 
-## Contribution
+---
 
-Contributions are welcome! Please submit a Pull Request or create an Issue.
+## Contributing
+
+Contributions and discussions are welcome if you are interested in topics such as:
+
+- Managing task execution and state using a relational database
+- Coordinating non-reversible external side effects
+- Simple state machine modeling
+- Retry and manual recovery after execution failures
+
+This project is still in an exploratory stage.
+It is intended primarily for learning, experimentation, and use in small-to-medium scale systems, rather than as a production-grade workflow or saga framework.

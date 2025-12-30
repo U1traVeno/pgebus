@@ -1,87 +1,158 @@
-# pgebus
+# pgworkflow
 
-[English](README.md) | **简体中文**
+[**English**](README.md) | [简体中文](README.zh-CN.md)
 
-基于 PostgreSQL 的事件总线系统 - 轻量级且可靠的事件处理框架
+基于 PostgreSQL 的工作流 / Outbox 引擎  
+用于处理**不可回滚的外部操作**
 
-## 功能特性
+---
 
-- ✅ **PostgreSQL 作为唯一数据源** - 数据库作为唯一的队列，确保数据一致性
-- ✅ **NOTIFY/LISTEN 实时通知** - 利用 PostgreSQL 的原生功能进行事件推送
-- ✅ **并发安全** - 确保事件不会被重复处理
-- ✅ **延迟执行** - 支持定时任务和延迟事件处理
-- ✅ **自动重试** - 内置重试机制，自动处理失败
-- ✅ **分层事件分发** - FastAPI 风格的路由组合（`prefix` + `include_router()`）（TODO：如需通配符/前缀匹配可补充）
-- ✅ **完整类型标注** - 内置完整类型注解（PEP 561）
+## pgworkflow 是什么
 
-## 安装
+**pgworkflow 不是 Event Bus，也不是消息队列。**
 
-待补充
+pgworkflow 是一个**基于 PostgreSQL 的工作流 / outbox 执行引擎**，用于解决下面这一类问题：
 
-## pgebus 不是什么
+- 系统需要调用 **不可回滚的外部系统**
+- 失败不能“算了重试”
+- 状态必须**可追溯、可审计、可恢复**
+- PostgreSQL 已经是系统的事实来源（Source of Truth）
 
-pgebus 并不打算替代以下工具：
+如果你想要的是发布 / 订阅、广播、流式处理 ——  
+**请不要使用 pgworkflow。**
+
+---
+
+## 核心思想
+
+pgworkflow 只坚持三件事：
+
+> **PostgreSQL 是唯一可信状态源**  
+> **外部副作用永远不被视为事务的一部分**  
+> **数据库状态绝不能“说谎”**
+
+它解决的问题不是“如何更快地发消息”，而是：
+
+- 这件事**到底做没做**
+- 做到哪一步了
+- 失败是**什么时候、因为什么**
+- 现在系统**该不该继续、还是需要人工介入**
+
+---
+
+## 特性
+
+- ✅ **PostgreSQL 作为唯一事实来源**
+  - 所有操作 / 工作流步骤都持久化在数据库中
+  - 没有隐藏状态
+
+- ✅ **Outbox 风格执行模型**
+  - 先提交数据库意图
+  - 再由 worker 执行外部副作用
+
+- ✅ **明确的失败语义**
+  - 失败是状态，而不是异常日志
+  - 不存在“可能已经处理过”的灰色状态
+
+- ✅ **并发安全**
+  - 基于 `SELECT ... FOR UPDATE SKIP LOCKED`
+  - 单数据库内保证不重复执行
+
+- ✅ **延迟执行**
+  - 通过 `run_at` 支持定时 / 延迟操作
+
+- ✅ **自动重试**
+  - 内置重试与尝试次数记录
+
+- ✅ **基于 Router 的结构化组织**
+  - 类 FastAPI 的路由模型（`prefix` / `include_router`）
+  - 适合大型但结构清晰的工作流
+
+- ✅ **完整类型标注**
+  - 全量类型注解（PEP 561）
+
+---
+
+## pgworkflow 不是什么
+
+pgworkflow **不能、也不打算替代**：
 
 - RabbitMQ
 - Redis Streams
 - Kafka
 - NATS
-- 云原生消息代理
+- 各类云消息服务
 
-具体来说，它不适用于以下场景：
+它**不适合**：
 
-- 高吞吐量的事件流处理
-- 大规模的发布/订阅工作负载
-- 跨数据中心或互联网级别的消息传递
-- 大型负载的消息传递
+- 高吞吐事件流
+- 大规模 fan-out / pub-sub
+- 跨数据中心消息分发
+- “尽力而为”的通知型事件
 
-如果你需要高吞吐量、大规模发布/订阅或解耦的消费者，请使用专业的消息代理。
+如果你关心的是吞吐量、广播能力或消费者解耦 ——  
+**请使用真正的消息队列。**
 
-## 为什么使用 pgebus
+---
 
-以下情况可能适合使用 pgebus：
+## 什么时候适合用 pgworkflow
 
-- 你的应用主要是本地或单体架构
-- 你可以控制 PostgreSQL 实例
-- 你有长时间运行或高成本的外部任务
-- 丢失或重复事件会带来实际成本
-- 你已经依赖 PostgreSQL 来保证数据正确性
+你很可能适合 pgworkflow，如果：
 
-## 为什么不使用 pgebus
+- 系统是**单体或轻分布式**
+- 你**完全控制 PostgreSQL**
+- 存在**昂贵或不可回滚的外部操作**
+- 重复执行会带来真实成本
+- 你需要**查看、审计、回放**执行过程
+- 相比吞吐量，你更在乎正确性
 
-以下情况可能不适合使用 pgebus：
+---
 
-- 你的系统是微服务架构
-- 你需要跨区域的水平扩展
-- 你需要处理突发流量或大规模发布/订阅
-- 你将事件视为尽力而为的信号
+## 什么时候不该用
 
-## API 参考
+如果符合以下情况，请不要使用 pgworkflow：
 
-本项目刻意模仿 FastAPI 的使用手感：
+- 系统高度微服务化
+- 需要跨地域水平扩展
+- 存在突发高并发 / 大 fan-out
+- 事件只是“通知信号”
+- 你期望 exactly-once（外部副作用不存在真正的 exactly-once）
 
-- 创建一个 `EventRouter()`（通常命名为 `event`）
-- 使用 `@event.on("...")` 注册处理函数
-- 使用 `include_router(...)` 进行路由组合（类似 prefix）
-- 使用 `await EventSystem(...).start()` / `await ...stop()` 管理生命周期
-- 使用 `publish_event(...)` 发布事件
+---
 
-### 快速开始
+## API 概览
+
+pgworkflow 有意采用类似 FastAPI 的心智模型：
+
+- 使用 `WorkflowRouter` 定义工作流
+- 使用 `@router.on("...")` 注册步骤
+- 通过 `include_router(...)` 组合结构
+- 使用 `WorkflowSystem.start()` 启动 worker
+- 通过 `publish_operation(...)` 记录执行意图
+
+---
+
+## 快速开始
 
 ```python
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-from pgebus import EventRouter, EventSystem, Settings, DatabaseSessionManager, publish_event
+from pgworkflow import (
+    WorkflowRouter,
+    WorkflowSystem,
+    Settings,
+    DatabaseSessionManager,
+    publish_operation,
+)
+
+router = WorkflowRouter()
 
 
-event = EventRouter()
-
-
-@event.on("demo.hello", transactional=False)
+@router.on("demo.hello", transactional=False)
 async def handle_demo(ctx, payload):
-    # payload is the raw DB payload dict
-    # ctx.session is None unless some handler requires transactional=True
+    # payload 是已持久化的操作数据
+    # 除非有 handler 声明 transactional=True，否则 ctx.session 为 None
     print("got:", payload)
 
 
@@ -93,106 +164,119 @@ async def main() -> None:
             "user": "postgres",
             "password": "postgres",
             "database": "postgres",
-            "application_name": "pgebus",
-            "schema": "pgebus",
+            "application_name": "pgworkflow",
+            "schema": "pgworkflow",
         },
-        event_system={
-            "channel": "events",
+        workflow_system={
+            "channel": "workflow",
             "n_workers": 5,
         },
     )
 
-    system = EventSystem(router=event, settings=settings)
+    system = WorkflowSystem(router=router, settings=settings)
     await system.start()
 
-    # Publish from your app code (can be the same process)
-    publisher_sm = DatabaseSessionManager(settings.database)
-    async with publisher_sm.session() as session:
-        await publish_event(
+    # 在业务代码中记录“执行意图”
+    sm = DatabaseSessionManager(settings.database)
+    async with sm.session() as session:
+        await publish_operation(
             session,
-            event_type="demo.hello",
+            operation_type="demo.hello",
             payload={"msg": "hi"},
-            channel=settings.event_system.channel,
+            channel=settings.workflow_system.channel,
         )
-        # IMPORTANT: publish_event does NOT commit
+        # 注意：publish_operation 不会自动 commit
         await session.commit()
 
-    # Delayed execution
-    await publish_event(
-        session,
-        event_type="demo.hello",
-        payload={"msg": "later"},
-        channel=settings.event_system.channel,
-        run_at=datetime.now(timezone.utc) + timedelta(seconds=10),
-    )
-    await session.commit()
+    # 延迟执行
+    async with sm.session() as session:
+        await publish_operation(
+            session,
+            operation_type="demo.hello",
+            payload={"msg": "later"},
+            channel=settings.workflow_system.channel,
+            run_at=datetime.now(timezone.utc) + timedelta(seconds=10),
+        )
+        await session.commit()
 
- # ... your app runs ...
+    # ... 应用继续运行 ...
 
     await system.stop()
-    await publisher_sm.close()
+    await sm.close()
 
 
 asyncio.run(main())
 ```
 
-### 核心 API
+---
 
-#### `EventSystem`
+## 事务语义（重要）
 
-- `EventSystem(router: EventRouter, settings: Settings)`
-- `await EventSystem.start()`
-- `await EventSystem.stop(wait_for_completion: bool = True, timeout: float | None = 30.0)`
+- `transactional=True` 的含义是：
+  - **该 handler 需要运行在 dispatcher 管理的数据库事务中**
 
-说明：
+- 它 **不意味着**：
+  - 自动提交
+  - 每个 handler 一个事务
 
-- `start()` 会确保配置的 schema 存在（`CREATE SCHEMA IF NOT EXISTS`）。
-- `start()` 不会帮你创建数据表/迁移。（TODO：补充推荐的迁移方式。）
+规则：
 
-#### `EventRouter`
+- 每个 operation **最多只会开启一个事务**
+- 只有在确实需要时才会开启事务
+- handler 内 **禁止调用**：
+  - `commit`
+  - `rollback`
+  - `close`
+  - `begin`
+  - `begin_nested`
 
-- `EventRouter(prefix: str = "")`
-- `@router.on(path: str)` 注册处理函数。
-- `router.include_router(other: EventRouter, prefix: str = "")` 组合路由。
+如果你非常清楚自己在做什么，可以使用 unsafe ：
 
-分发规则：
+```python
+ctx.session.unsafe
+```
 
-- 当前事件类型匹配为**精确匹配**（`path == event["type"]`）。
-- “分层/前缀”的路由组织已支持：通过 router 的 `prefix` 与 `include_router(...)` 以 `.` 拼接。
-- TODO：如果你希望处理函数支持 `demo.*` 这类“按前缀/通配符匹配”，可在路由器里新增匹配策略。
+一旦使用，意味着你放弃 pgworkflow 提供的事务保证。
 
-处理函数签名：
+---
 
-- `async def handler(ctx: EventContext, payload: dict) -> Any`
+## 一致性模型（请务必阅读）
 
-关于 `transactional`：
+pgworkflow **不会、也无法**让外部副作用具备事务性。
 
-- `@router.on("...", transactional=True)` 表示“我要求在 dispatcher 管理的事务中运行”。
-- ❌ `transactional` 不是自动 commit。
-- ❌ `transactional` 不是每个 handler 一个事务。
-- ✅ 最多只会开一个事务；是否开启由 dispatcher 根据所有 handlers 决定。
-- handler 中禁止 `commit/rollback/close/begin/begin_nested/connection/get_bind/invalidate`；如需原始能力可用 `ctx.session.unsafe`（不推荐）。
+它只保证：
 
-#### `publish_event`
+- 数据库不会在没有明确记录的情况下推进状态
+- 提交失败不会导致工作流“假完成”
+- 每一次尝试都是可观察、可审计的
 
-- `await publish_event(session, event_type: str, payload: dict, channel: str, run_at: datetime | None = None) -> Event`
+外部系统可能成功或失败，  
+pgworkflow 的责任是：**数据库永远不说谎。**
 
-说明：
-
-- 调用方必须 `commit()`（或用 `async with session.begin(): ...`）后，事件才会真正入库并可被 worker 消费。
-- `payload` 建议保持精简（通常只放业务 ID），因为 PostgreSQL 是唯一事实来源。
+---
 
 ## 依赖
 
 - Python 3.8+
-- SQLAlchemy 2.0+（支持 asyncio）
+- SQLAlchemy 2.0+（async）
 - asyncpg
-- PostgreSQL 9.5+
+- PostgreSQL 14+
+
+---
 
 ## 许可证
 
 MIT
 
+---
+
 ## 贡献
 
-欢迎贡献！请提交 Pull Request 或创建 Issue。
+欢迎对以下方向感兴趣的开发者参与讨论或贡献：
+
+- 基于数据库的任务执行与状态记录
+- 不可回滚外部操作的可靠调度
+- 简单状态机建模
+- 执行失败后的重试与人工恢复
+
+本项目仍处于探索阶段，更适合作为学习、实验或中小规模系统的基础组件。
